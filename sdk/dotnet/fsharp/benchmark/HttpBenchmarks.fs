@@ -55,13 +55,13 @@ type MockHttpResponse() =
 [<MemoryDiagnoser>]
 [<SimpleJob>]
 type HttpBenchmarks() =
- 
+
     // Use consistent test events with realistic data like other benchmarks
     let smallEvent = ServerSentEvents.createPatchElementsEvent Sizes.Small ValueNone
     let mediumEvent = ServerSentEvents.createPatchElementsEvent Sizes.Medium (ValueSome "medium-sse-event")
     let largeEvent = ServerSentEvents.createPatchElementsEvent Sizes.Large (ValueSome "large-sse-event")
 
-    [<Benchmark>]
+    [<Benchmark(Baseline = true)>]
     member _.HttpHandler_SendServerEvent_Small() =
         let response = MockHttpResponse()
 

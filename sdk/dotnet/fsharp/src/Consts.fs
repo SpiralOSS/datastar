@@ -4,6 +4,7 @@ namespace StarFederation.Datastar.FSharp
 
 open System
 
+[<Struct>]
 type ElementPatchMode =
 /// Morphs the element into the existing element using Datastar&#39;s morphing, preserving focus and minimizing element changes.
 | Outer
@@ -22,6 +23,7 @@ type ElementPatchMode =
 /// Do not morph, simply replace the whole element and reset any related state.
 | Replace
 
+[<Struct>]
 type EventType =
 /// An event for patching HTML elements into the DOM.
 | PatchElements
@@ -36,13 +38,11 @@ module Consts =
     /// Default: TimeSpan.FromMilliseconds 1000
     let DefaultSseRetryDuration = TimeSpan.FromMilliseconds 1000
 
-
-    /// Default: outer - Morphs the element into the existing element using Datastar&#39;s morphing, preserving focus and minimizing element changes.
+    /// Default: outer - Morphs the element into the existing element using Datastar's morphing, preserving focus and minimizing element changes.
     let DefaultElementPatchMode = Outer
 
     let [<Literal>] DefaultElementsUseViewTransitions = false
     let [<Literal>] DefaultPatchSignalsOnlyIfMissing = false
-
 
     let [<Literal>] DatastarDatalineSelector = "selector"
     let [<Literal>] DatastarDatalineMode = "mode"
@@ -52,7 +52,7 @@ module Consts =
     let [<Literal>] DatastarDatalineOnlyIfMissing = "onlyIfMissing"
 
     module ElementPatchMode =
-        let toString this =
+        let inline toString this =
             match this with
                 | ElementPatchMode.Outer -> "outer"
                 | ElementPatchMode.Inner -> "inner"
@@ -64,7 +64,7 @@ module Consts =
                 | ElementPatchMode.Replace -> "replace"
 
     module EventType =
-        let toString this =
+        let inline toString this =
             match this with
                 | EventType.PatchElements -> "datastar-patch-elements"
                 | EventType.PatchSignals -> "datastar-patch-signals"

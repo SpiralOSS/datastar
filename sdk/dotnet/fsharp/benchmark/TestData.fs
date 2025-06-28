@@ -121,19 +121,19 @@ module ServerSentEvents =
         { EventType = PatchElements
           Id = eventId
           Retry = TimeSpan.FromSeconds(1.0)
-          DataLines = (Html.generate size).Split([|"\r\n";"\r";"\n"|], StringSplitOptions.None) }
+          DataLines = StringValues(Html.generate size) }
     
     let createPatchSignalsEvent size eventId =
         { EventType = PatchSignals
           Id = eventId  
           Retry = TimeSpan.FromSeconds(1.0)
-          DataLines = (Signals.generate size).Split([|"\r\n";"\r";"\n"|], StringSplitOptions.None) }
+          DataLines = StringValues(Signals.generate size) }
     
     let createExecuteScriptEvent size eventId =
         { EventType = PatchElements // ExecuteScript uses PatchElements internally
           Id = eventId
           Retry = TimeSpan.FromSeconds(1.0)
-          DataLines = ($"<script>{JavaScript.generate size}</script>").Split([|"\r\n";"\r";"\n"|], StringSplitOptions.None) }
+          DataLines = StringValues($"<script>{JavaScript.generate size}</script>") }
 
 /// Standard size definitions for consistent benchmarking
 module Sizes =

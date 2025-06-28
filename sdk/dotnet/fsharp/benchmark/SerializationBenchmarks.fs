@@ -29,7 +29,6 @@ type SerializationBenchmarks() =
     member _.SerializeAsBytes_Large() =
         ServerSentEvent.serializeAsBytes largeEvent |> Array.ofSeq
 
-(*
     [<Benchmark>]
     member _.SerializeToBuffer_Small() =
         let buffer = ArrayBufferWriter<byte>()
@@ -47,4 +46,3 @@ type SerializationBenchmarks() =
         let buffer = ArrayBufferWriter<byte>()
         ServerSentEvent.serializeToBuffer largeEvent buffer
         buffer.WrittenMemory.ToArray()
-*)

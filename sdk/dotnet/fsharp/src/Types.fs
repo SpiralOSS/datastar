@@ -1,21 +1,25 @@
 namespace StarFederation.Datastar.FSharp
 
 open System
+open System.Buffers
 open System.Collections.Generic
 open System.IO
+open System.IO.Pipelines
 open System.Text
 open System.Text.Json
 open System.Text.Json.Nodes
 open System.Text.RegularExpressions
 open System.Threading
 open System.Threading.Tasks
+open Microsoft.Extensions.Primitives
 open StarFederation.Datastar.FSharp.Utility
 
+[<Struct>]
 type ServerSentEvent =
     { EventType: EventType
       Id: string voption
       Retry: TimeSpan
-      DataLines: string[] }
+      DataLines: StringValues }
 
 /// <summary>
 /// Signals read to and from Datastar on the front end
@@ -32,20 +36,27 @@ type SignalPath = string
 /// </summary>
 type Selector = string
 
+[<Struct>]
 type PatchElementsOptions =
     { Selector: Selector voption
       PatchMode: ElementPatchMode
       UseViewTransition: bool
       EventId: string voption
       Retry: TimeSpan }
+
+[<Struct>]
 type PatchSignalsOptions =
     { OnlyIfMissing: bool
       EventId: string voption
       Retry: TimeSpan }
+
+[<Struct>]
 type RemoveElementOptions =
     { UseViewTransition: bool
       EventId: string voption
       Retry: TimeSpan }
+
+[<Struct>]
 type ExecuteScriptOptions = { EventId: string voption; Retry: TimeSpan }
 
 /// <summary>
@@ -65,9 +76,9 @@ type IReadSignals =
 /// </summary>
 type ISendServerEvent =
     abstract StartServerEventStream : unit -> Task
-    abstract StartServerEventStream : additionalHeaders:(string * string)[] -> Task
-    abstract StartServerEventStream : additionalHeaders:(string * string)[] * CancellationToken -> Task
-    //
+    abstract StartServerEventStream : CancellationToken -> Task
+    abstract StartServerEventStream : additionalHeaders:IDictionary<string, StringValues> -> Task
+    abstract StartServerEventStream : additionalHeaders:IDictionary<string, StringValues> * CancellationToken -> Task
     abstract SendServerEvent : ServerSentEvent -> Task
     abstract SendServerEvent : ServerSentEvent * CancellationToken -> Task
 
@@ -82,17 +93,70 @@ module ServerSentEvent =
             if (sse.Retry <> Consts.DefaultSseRetryDuration)
             then $"retry: {sse.Retry.TotalMilliseconds}"
 
-            yield! sse.DataLines |> Array.map (fun dataLine -> $"data: {dataLine}")
+            yield! sse.DataLines |> Seq.map (fun dataLine -> $"data: {dataLine}")
 
             ""; ""; ""
         }
+
     let serializeAsBytes sse =
         lines sse
         |> Seq.map (fun line -> Seq.append (Encoding.UTF8.GetBytes line) "\n"B)
         |> Seq.concat
 
+    let private eventPrefix = "event: "B
+    let private idPrefix = "id: "B
+    let private retryPrefix = "retry: "B
+    let private dataPrefix = "data: "B
+
+    let inline private writeUtf8String (str: string) (writer: IBufferWriter<byte>) =
+        let span = writer.GetSpan(Encoding.UTF8.GetByteCount(str))
+        let bytesWritten = Encoding.UTF8.GetBytes(str.AsSpan(), span)
+        writer.Advance(bytesWritten)
+        writer
+
+    let inline private writeUtf8Literal (bytes: byte[]) (writer: IBufferWriter<byte>) =
+        let span = writer.GetSpan(bytes.Length)
+        bytes.AsSpan().CopyTo(span)
+        writer.Advance(bytes.Length)
+        writer
+
+    let inline private writeNewline (writer: IBufferWriter<byte>) =
+        let span = writer.GetSpan(1)
+        span[0] <- 10uy // '\n'
+        writer.Advance(1)
+
+    let serializeToBuffer (sse: ServerSentEvent) (writer: IBufferWriter<byte>) =
+        writer
+        |> writeUtf8Literal eventPrefix
+        |> writeUtf8String (sse.EventType |> Consts.EventType.toString)
+        |> writeNewline
+        |> ignore
+
+        if sse.Id |> ValueOption.isSome then
+            writer
+            |> writeUtf8Literal idPrefix
+            |> writeUtf8String (sse.Id |> ValueOption.get)
+            |> writeNewline
+            |> ignore
+
+        if (sse.Retry <> Consts.DefaultSseRetryDuration) then
+            writer
+            |> writeUtf8Literal retryPrefix
+            |> writeUtf8String (sse.Retry.TotalMilliseconds.ToString())
+            |> writeNewline
+            |> ignore
+
+        for dataLine in sse.DataLines do
+            writer
+            |> writeUtf8Literal dataPrefix
+            |> writeUtf8String dataLine
+            |> writeNewline
+            |> ignore
+
+        writer |> writeNewline
+
 module Signals =
-    let value (signals:Signals) : string = signals.ToString()
+    let inline value (signals:Signals) : string = signals.ToString()
     let create (signalsString:string) = Signals signalsString
     let tryCreate (signalsString:string) =
         try
@@ -102,7 +166,7 @@ module Signals =
     let empty = Signals "{ }"
 
 module SignalPath =
-    let value (signalPath:SignalPath) = signalPath.ToString()
+    let inline value (signalPath:SignalPath) = signalPath.ToString()
     let kebabValue signals = signals |> value |> String.toKebab
     let isValidKey (signalPathKey:string) =
         signalPathKey |> String.isPopulated && signalPathKey.ToCharArray() |> Seq.forall (fun chr -> Char.IsLetter chr || Char.IsNumber chr || chr = '_')
@@ -127,7 +191,7 @@ module SignalPath =
 
 module Selector =
     let regex = Regex(@"[#.][-_]?[_a-zA-Z]+(?:\w|\\.)*|(?<=\s+|^)(?:\w+|\*)|\[[^\s""'=<>`]+?(?<![~|^$*])([~|^$*]?=(?:['""].*['""]|[^\s""'=<>`]+))?\]|:[\w-]+(?:\(.*\))?", RegexOptions.Compiled)
-    let value (selector:Selector) = selector.ToString()
+    let inline value (selector:Selector) = selector.ToString()
     let isValid (selectorString:string) = regex.IsMatch selectorString
     let tryCreate (selectorString:string) =
         if isValid selectorString

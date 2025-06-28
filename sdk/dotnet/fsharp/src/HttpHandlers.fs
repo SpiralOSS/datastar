@@ -1,5 +1,7 @@
 namespace StarFederation.Datastar.FSharp
 
+open System.Buffers
+open System.Collections.Generic
 open System.IO
 open System.Text
 open System.Text.Json
@@ -24,45 +26,52 @@ type ServerSentEventHttpHandler (httpResponse:HttpResponse) =
     let _startResponseLock = obj()
     let _sendEventChannel = Channel.CreateUnbounded<ServerSentEvent>()
 
-    static member StartServerEventStream (httpResponse:HttpResponse, additionalHeaders:(string * string)[], cancellationToken:CancellationToken) =
+    static member inline StartServerEventStream (httpResponse:HttpResponse, additionalHeaders:#seq<KeyValuePair<string, StringValues>>, cancellationToken:CancellationToken) =
         let task = backgroundTask {
-            let setHeader (httpResponse:HttpResponse) (name, content:string) =
-                if httpResponse.Headers.ContainsKey(name) |> not then
-                    httpResponse.Headers.Add(name, StringValues(content))
-
-            seq {
-                (HeaderNames.ContentType, "text/event-stream")
-                if (httpResponse.HttpContext.Request.Protocol = HttpProtocol.Http11) then
-                    ("Connection", "keep-alive")
-                yield! additionalHeaders
-                } |> Seq.iter (setHeader httpResponse)
+            httpResponse.Headers.ContentType <- "text/event-stream"
+            if (httpResponse.HttpContext.Request.Protocol = HttpProtocol.Http11) then
+                httpResponse.Headers.Connection <- "keep-alive"
+            for KeyValue(name, content) in additionalHeaders do
+                match httpResponse.Headers.TryGetValue(name) with
+                | true, existing ->
+                    // httpResponse.Headers[name] <- StringValues.Concat(existing, content)
+                    ()
+                | false, _ ->
+                    httpResponse.Headers.Add(name, content)
             do! httpResponse.StartAsync(cancellationToken)
             return! httpResponse.BodyWriter.FlushAsync(cancellationToken)
             }
         task :> Task
-    static member StartServerEventStream (httpResponse, additionalHeader) = ServerSentEventHttpHandler.StartServerEventStream(httpResponse, additionalHeader, httpResponse.HttpContext.RequestAborted)
 
-    static member SendServerEvent (httpResponse:HttpResponse, sse, cancellationToken:CancellationToken) =
-        let task = task {
-            let serializedSse = sse |> ServerSentEvent.serializeAsBytes |> Seq.toArray
-            return! httpResponse.BodyWriter.WriteAsync(serializedSse, cancellationToken)
-            }
-        task :> Task
-    static member SendServerEvent (sse, httpResponse) = ServerSentEventHttpHandler.SendServerEvent(httpResponse, sse, httpResponse.HttpContext.RequestAborted)
+    static member inline StartServerEventStream (httpResponse, additionalHeaders) = ServerSentEventHttpHandler.StartServerEventStream(httpResponse, additionalHeaders, httpResponse.HttpContext.RequestAborted)
+
+    static member inline StartServerEventStream (httpResponse:HttpResponse, cancellationToken:CancellationToken) = ServerSentEventHttpHandler.StartServerEventStream(httpResponse, Seq.empty, cancellationToken)
+
+    static member inline StartServerEventStream (httpResponse:HttpResponse) = ServerSentEventHttpHandler.StartServerEventStream(httpResponse, Seq.empty, httpResponse.HttpContext.RequestAborted)
+
+    static member inline SendServerEvent (httpResponse: HttpResponse, sse: ServerSentEvent, cancellationToken: CancellationToken) =
+        ServerSentEvent.serializeToBuffer sse httpResponse.BodyWriter
+        httpResponse.BodyWriter.FlushAsync(cancellationToken)
+
+    static member inline SendServerEvent (sse, httpResponse) = ServerSentEventHttpHandler.SendServerEvent(httpResponse, sse, httpResponse.HttpContext.RequestAborted)
 
     interface ISendServerEvent with
         member this.StartServerEventStream (additionalHeaders, cancellationToken) =
             lock _startResponseLock (fun () -> if _startResponseTask = null then _startResponseTask <- ServerSentEventHttpHandler.StartServerEventStream(httpResponse, additionalHeaders, cancellationToken))
             _startResponseTask
         member this.StartServerEventStream(additionalHeaders) = (this:>ISendServerEvent).StartServerEventStream(additionalHeaders, httpResponse.HttpContext.RequestAborted)
-        member this.StartServerEventStream() = (this:>ISendServerEvent).StartServerEventStream(Array.empty, httpResponse.HttpContext.RequestAborted)
+
+        member this.StartServerEventStream(cancellationToken:CancellationToken) =
+            lock _startResponseLock (fun () -> if _startResponseTask = null then _startResponseTask <- ServerSentEventHttpHandler.StartServerEventStream(httpResponse, cancellationToken))
+            _startResponseTask
+        member this.StartServerEventStream() = (this:>ISendServerEvent).StartServerEventStream(httpResponse.HttpContext.RequestAborted)
 
         member this.SendServerEvent(sse, cancellationToken) = task {
             do! _sendEventChannel.Writer.WriteAsync(sse, cancellationToken)
             do!
                 if _startResponseTask <> null
                 then _startResponseTask
-                else (this :> ISendServerEvent).StartServerEventStream(Array.empty, cancellationToken)
+                else (this :> ISendServerEvent).StartServerEventStream(cancellationToken)
             let! sse = _sendEventChannel.Reader.ReadAsync(cancellationToken)
             return! ServerSentEventHttpHandler.SendServerEvent(httpResponse, sse, cancellationToken)
             }
@@ -72,7 +81,7 @@ type ServerSentEventHttpHandler (httpResponse:HttpResponse) =
 [<Sealed>]
 type SignalsHttpHandler (httpRequest:HttpRequest) =
 
-    static member GetSignalsStream (httpRequest:HttpRequest) =
+    static member inline GetSignalsStream (httpRequest:HttpRequest) =
         match httpRequest.Method with
         | System.Net.WebRequestMethods.Http.Get ->
             match httpRequest.Query.TryGetValue(Consts.DatastarKey) with
@@ -80,7 +89,7 @@ type SignalsHttpHandler (httpRequest:HttpRequest) =
             | _ -> Stream.Null
         | _ -> httpRequest.Body
 
-    static member ReadSignalsAsync (httpRequest:HttpRequest, cancellationToken:CancellationToken) = task {
+    static member inline ReadSignalsAsync (httpRequest:HttpRequest, cancellationToken:CancellationToken) = task {
         match httpRequest.Method with
         | System.Net.WebRequestMethods.Http.Get ->
             match httpRequest.Query.TryGetValue(Consts.DatastarKey) with
@@ -94,9 +103,9 @@ type SignalsHttpHandler (httpRequest:HttpRequest) =
             with _ -> return Signals.empty
         }
 
-    static member ReadSignalsAsync (httpRequest:HttpRequest) = SignalsHttpHandler.ReadSignalsAsync(httpRequest, httpRequest.HttpContext.RequestAborted)
+    static member inline ReadSignalsAsync (httpRequest:HttpRequest) = SignalsHttpHandler.ReadSignalsAsync(httpRequest, httpRequest.HttpContext.RequestAborted)
 
-    static member ReadSignalsAsync<'T> (httpRequest:HttpRequest, jsonSerializerOptions:JsonSerializerOptions, cancellationToken:CancellationToken) = task {
+    static member inline ReadSignalsAsync<'T> (httpRequest:HttpRequest, jsonSerializerOptions:JsonSerializerOptions, cancellationToken:CancellationToken) = task {
         try
             match httpRequest.Method with
             | System.Net.WebRequestMethods.Http.Get ->
@@ -111,9 +120,9 @@ type SignalsHttpHandler (httpRequest:HttpRequest) =
         with _ -> return ValueNone
         }
 
-    static member ReadSignalsAsync<'T> (httpRequest:HttpRequest, cancellationToken:CancellationToken) = SignalsHttpHandler.ReadSignalsAsync<'T>(httpRequest, JsonSerializerOptions.SignalsDefault, cancellationToken)
-    static member ReadSignalsAsync<'T> (httpRequest:HttpRequest, jsonSerializerOptions:JsonSerializerOptions) = SignalsHttpHandler.ReadSignalsAsync<'T>(httpRequest, jsonSerializerOptions, httpRequest.HttpContext.RequestAborted)
-    static member ReadSignalsAsync<'T> (httpRequest:HttpRequest) = SignalsHttpHandler.ReadSignalsAsync<'T>(httpRequest, JsonSerializerOptions.SignalsDefault)
+    static member inline ReadSignalsAsync<'T> (httpRequest:HttpRequest, cancellationToken:CancellationToken) = SignalsHttpHandler.ReadSignalsAsync<'T>(httpRequest, JsonSerializerOptions.SignalsDefault, cancellationToken)
+    static member inline ReadSignalsAsync<'T> (httpRequest:HttpRequest, jsonSerializerOptions:JsonSerializerOptions) = SignalsHttpHandler.ReadSignalsAsync<'T>(httpRequest, jsonSerializerOptions, httpRequest.HttpContext.RequestAborted)
+    static member inline ReadSignalsAsync<'T> (httpRequest:HttpRequest) = SignalsHttpHandler.ReadSignalsAsync<'T>(httpRequest, JsonSerializerOptions.SignalsDefault, httpRequest.HttpContext.RequestAborted)
 
     interface IReadSignals with
         member this.GetSignalsStream() = SignalsHttpHandler.GetSignalsStream(httpRequest)

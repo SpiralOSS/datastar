@@ -1,5 +1,5 @@
-
 using System.Text.Json;
+using Microsoft.Extensions.Primitives;
 using Microsoft.FSharp.Core;
 using Core = StarFederation.Datastar.FSharp;
 
@@ -7,14 +7,18 @@ namespace StarFederation.Datastar.DependencyInjection;
 
 public interface IDatastarService
 {
-    Task StartServerEventStream(params (string, string)[] additionalHeaders);
-    Task StartServerEventStream(params KeyValuePair<string, string>[] additionalHeaders);
+    Task StartServerEventStream(IDictionary<string, StringValues> additionalHeaders);
     Task PatchElementsAsync(string fragments, PatchElementsOptions? options = null);
     Task RemoveElementAsync(string selector, RemoveFragmentOptions? options = null);
+
     /// <summary>
     /// Note: If TType is string then it is assumed that it is an already serialized Signals, otherwise serialize with jsonSerializerOptions
     /// </summary>
-    Task PatchSignalsAsync<TType>(TType signals, JsonSerializerOptions? jsonSerializerOptions = null, PatchSignalsOptions? patchSignalsOptions = null);
+    Task PatchSignalsAsync<TType>(
+        TType signals,
+        JsonSerializerOptions? jsonSerializerOptions = null,
+        PatchSignalsOptions? patchSignalsOptions = null
+    );
     Task ExecuteScriptAsync(string script, ExecuteScriptOptions? options = null);
 
     /// <summary>
@@ -35,25 +39,40 @@ public interface IDatastarService
     Task<TType?> ReadSignalsAsync<TType>(JsonSerializerOptions? options = null);
 }
 
-internal class DatastarService(Core.ISendServerEvent sendServerEventHandler, Core.IReadSignals signalsHandler) : IDatastarService
+internal class DatastarService(
+    Core.ISendServerEvent sendServerEventHandler,
+    Core.IReadSignals signalsHandler
+) : IDatastarService
 {
-    public Task StartServerEventStream(params (string, string)[] additionalHeaders)
-        => sendServerEventHandler.StartServerEventStream(additionalHeaders.Select(kv => kv.AsTuple()).ToArray());
+    public Task StartServerEventStream(IDictionary<string, StringValues> additionalHeaders) =>
+        sendServerEventHandler.StartServerEventStream(additionalHeaders);
 
-    public Task StartServerEventStream(params KeyValuePair<string, string>[] additionalHeaders)
-        => sendServerEventHandler.StartServerEventStream(additionalHeaders.Select(kv => kv.AsTuple()).ToArray());
+    public Task PatchElementsAsync(string fragments, PatchElementsOptions? options = null) =>
+        sendServerEventHandler.SendServerEvent(
+            Core.ServerSentEventGenerator.PatchElements(fragments, options ?? new())
+        );
 
-    public Task PatchElementsAsync(string fragments, PatchElementsOptions? options = null)
-        => sendServerEventHandler.SendServerEvent(Core.ServerSentEventGenerator.PatchElements(fragments, options ?? new()));
+    public Task RemoveElementAsync(string selector, RemoveFragmentOptions? options = null) =>
+        sendServerEventHandler.SendServerEvent(
+            Core.ServerSentEventGenerator.RemoveElement(selector, options ?? new())
+        );
 
-    public Task RemoveElementAsync(string selector, RemoveFragmentOptions? options = null)
-        => sendServerEventHandler.SendServerEvent(Core.ServerSentEventGenerator.RemoveElement(selector, options ?? new()));
+    public Task PatchSignalsAsync<TType>(
+        TType signals,
+        JsonSerializerOptions? jsonSerializerOptions = null,
+        PatchSignalsOptions? patchSignalsOptions = null
+    ) =>
+        sendServerEventHandler.SendServerEvent(
+            Core.ServerSentEventGenerator.PatchSignals(
+                signals as string ?? JsonSerializer.Serialize(signals, jsonSerializerOptions),
+                patchSignalsOptions ?? new()
+            )
+        );
 
-    public Task PatchSignalsAsync<TType>(TType signals, JsonSerializerOptions? jsonSerializerOptions = null, PatchSignalsOptions? patchSignalsOptions = null)
-        => sendServerEventHandler.SendServerEvent(Core.ServerSentEventGenerator.PatchSignals(signals as string ?? JsonSerializer.Serialize(signals, jsonSerializerOptions), patchSignalsOptions ?? new()));
-
-    public Task ExecuteScriptAsync(string script, ExecuteScriptOptions? options = null)
-        => sendServerEventHandler.SendServerEvent(Core.ServerSentEventGenerator.ExecuteScript(script, options ?? new()));
+    public Task ExecuteScriptAsync(string script, ExecuteScriptOptions? options = null) =>
+        sendServerEventHandler.SendServerEvent(
+            Core.ServerSentEventGenerator.ExecuteScript(script, options ?? new())
+        );
 
     public Stream GetSignalsStream() => signalsHandler.GetSignalsStream();
 
@@ -63,9 +82,60 @@ internal class DatastarService(Core.ISendServerEvent sendServerEventHandler, Cor
         return String.IsNullOrEmpty(signals) ? null : signals;
     }
 
-    public async Task<TType?> ReadSignalsAsync<TType>(JsonSerializerOptions? jsonSerializerOptions = null)
+    public async Task<TType?> ReadSignalsAsync<TType>(
+        JsonSerializerOptions? jsonSerializerOptions = null
+    )
     {
-        FSharpValueOption<TType> read = await signalsHandler.ReadSignalsAsync<TType>(jsonSerializerOptions ?? Core.JsonSerializerOptions.SignalsDefault);
+        FSharpValueOption<TType> read = await signalsHandler.ReadSignalsAsync<TType>(
+            jsonSerializerOptions ?? Core.JsonSerializerOptions.SignalsDefault
+        );
         return read.IsSome ? read.Value : default;
+    }
+}
+
+internal static class DatastarServiceExtensions
+{
+    public static Task StartServerEventStream(
+        this DatastarService datastarService,
+        params (string, string)[] additionalHeaders
+    )
+    {
+        var headers = new Dictionary<string, StringValues>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (key, value) in additionalHeaders)
+        {
+            if (headers.TryGetValue(key, out var existing))
+            {
+                headers[key] = StringValues.Concat(existing, value);
+            }
+            else
+            {
+                headers[key] = new StringValues(value);
+            }
+        }
+
+        return datastarService.StartServerEventStream(headers);
+    }
+
+    public static Task StartServerEventStream(
+        this DatastarService datastarService,
+        params KeyValuePair<string, string>[] additionalHeaders
+    )
+    {
+        var headers = new Dictionary<string, StringValues>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var kvp in additionalHeaders)
+        {
+            if (headers.TryGetValue(kvp.Key, out var existing))
+            {
+                headers[kvp.Key] = StringValues.Concat(existing, kvp.Value);
+            }
+            else
+            {
+                headers[kvp.Key] = new StringValues(kvp.Value);
+            }
+        }
+
+        return datastarService.StartServerEventStream(headers);
     }
 }
