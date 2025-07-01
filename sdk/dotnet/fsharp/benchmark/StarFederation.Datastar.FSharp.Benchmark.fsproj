@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <AssemblyName>StarFederation.Datastar.FSharp.Benchmark</AssemblyName>
+        <OutputType>Exe</OutputType>
+        <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
+        <RootNamespace>StarFederation.Datastar.FSharp.Benchmark</RootNamespace>
+        <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+        <GenerateDocumentationFile>false</GenerateDocumentationFile>
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+        <IsPackable>false</IsPackable>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="BenchmarkDotNet" Version="0.15.2" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="../src/StarFederation.Datastar.FSharp.fsproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Compile Include="TestData.fs" />
+        <Compile Include="PatchElementsBenchmarks.fs" />
+        <Compile Include="PatchSignalsBenchmarks.fs" />
+        <Compile Include="ExecuteScriptBenchmarks.fs" />
+        <Compile Include="SerializationBenchmarks.fs" />
+        <Compile Include="HttpBenchmarks.fs" />
+        <Compile Include="Program.fs" />
+    </ItemGroup>
+</Project>
